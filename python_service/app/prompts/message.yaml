@@ -1,0 +1,8 @@
+message: |
+  Dear customer,
+
+  Thank you for your order. Please find your invoice {invoice_number} for the total
+  amount of {total_amount} attached as a PDF.
+
+  Best regards,
+  PO-In Team

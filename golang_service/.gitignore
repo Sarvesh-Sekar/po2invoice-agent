@@ -1,0 +1,20 @@
+# Binaries
+bin/
+*.exe
+
+# Env
+.env
+.env.*
+envs/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Logs
+*.log
+
+# Editor
+.idea/
+.vscode/
+*.swp

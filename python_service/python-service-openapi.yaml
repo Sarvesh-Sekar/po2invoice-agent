@@ -1,0 +1,104 @@
+openapi: 3.0.3
+info:
+  title: Agent Orchestration Service API
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /agents/purchase-orders/process:
+    post:
+      summary: Start PO extraction and verification workflow
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Workflow accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+  /agents/purchase-orders/{runId}/decision:
+    post:
+      summary: Submit HITL decision and resume workflow
+      parameters:
+        - {name: runId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HITLDecisionRequest'
+      responses:
+        '202':
+          description: Decision accepted
+  /agents/runs/{runId}:
+    get:
+      summary: Get agent workflow status
+      parameters:
+        - {name: runId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Agent run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+  /internal/events/sale-delivered:
+    post:
+      summary: Handle sale delivered event from Go service
+      security:
+        - internalApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaleDeliveredEvent'
+      responses:
+        '202': {description: Invoice workflow accepted}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    internalApiKey:
+      type: apiKey
+      in: header
+      name: X-Internal-API-Key
+  schemas:
+    AgentRun:
+      type: object
+      properties:
+        run_id: {type: string, format: uuid}
+        workflow: {type: string, enum: [PURCHASE_ORDER, INVOICE]}
+        status: {type: string, enum: [QUEUED, RUNNING, WAITING_FOR_HUMAN, COMPLETED, FAILED]}
+        current_step: {type: string}
+        po_id: {type: string, format: uuid, nullable: true}
+        sale_id: {type: string, format: uuid, nullable: true}
+    HITLDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision: {type: string, enum: [APPROVE, REJECT, EDIT]}
+        changes: {type: object, additionalProperties: true}
+        reason: {type: string}
+    SaleDeliveredEvent:
+      type: object
+      required: [sale_id]
+      properties:
+        sale_id: {type: string, format: uuid}
+        event: {type: string, enum: [SALE_DELIVERED]}
+        occurred_at: {type: string, format: date-time}
+        idempotency_key: {type: string}

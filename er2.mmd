@@ -1,0 +1,119 @@
+erDiagram
+
+    CUSTOMERS {
+        uuid id PK
+        string customer_code UK
+        string name
+        string status
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    FIELD_DEFINITIONS {
+        uuid field_id PK
+        string field_name
+        string field_description
+        string field_type
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    PURCHASE_ORDERS {
+        uuid po_id PK
+        uuid customer_id FK
+        string s3_url
+        timestamp created_at
+        timestamp modified_at
+        uuid created_by
+        uuid modified_by
+    }
+
+    PO_HEADER_FIELDS {
+        uuid id PK
+        uuid po_id FK
+        uuid field_id FK
+        text field_value
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    PO_LINE_ITEMS {
+        uuid po_line_item_id PK
+        uuid po_id FK
+        uuid product_id FK
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    PO_LINE_ITEM_FIELDS {
+        uuid id PK
+        uuid po_line_item_id FK
+        uuid field_id FK
+        text field_value
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    PRODUCTS {
+        uuid product_id PK
+        string sku UK
+        string name
+        decimal catalog_price
+        string status
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    EPISODIC_MEMORY {
+        uuid id PK
+        uuid customer_id FK
+        uuid field_id FK
+        string location_hint
+        string document_pattern
+        text instruction
+        decimal confidence
+        int usage_count
+        int success_count
+        int failure_count
+        timestamp last_used_at
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    SALES {
+        uuid sale_id PK
+        uuid po_id FK
+        string status
+        timestamp created_at
+        timestamp modified_at
+    }
+
+    INVOICES {
+        uuid invoice_id PK
+        uuid po_id FK
+        string invoice_number
+        string status
+        string gst_irn
+        string s3_url
+        
+        timestamp created_at
+        timestamp modified_at
+    }
+
+
+    CUSTOMERS ||--o{ PURCHASE_ORDERS : places
+
+    PURCHASE_ORDERS ||--o{ PO_HEADER_FIELDS : contains
+    FIELD_DEFINITIONS ||--o{ PO_HEADER_FIELDS : defines
+
+    PURCHASE_ORDERS ||--o{ PO_LINE_ITEMS : contains
+    PRODUCTS ||--o{ PO_LINE_ITEMS : references
+
+    PO_LINE_ITEMS ||--o{ PO_LINE_ITEM_FIELDS : contains
+    FIELD_DEFINITIONS ||--o{ PO_LINE_ITEM_FIELDS : defines
+
+    CUSTOMERS ||--o{ EPISODIC_MEMORY : has
+    FIELD_DEFINITIONS ||--o{ EPISODIC_MEMORY : specializes
+
+    PURCHASE_ORDERS ||--o| SALES : creates
+    PURCHASE_ORDERS ||--o| INVOICES : generates

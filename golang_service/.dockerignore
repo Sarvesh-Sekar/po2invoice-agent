@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.env.*
+envs/
+bin/
+tmp/
+coverage.out
+coverage.html
+*.log
+Dockerfile
+README.md

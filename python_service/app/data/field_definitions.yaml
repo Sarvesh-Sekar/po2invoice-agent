@@ -1,0 +1,63 @@
+# Canonical FIELD_DEFINITIONS seed data.
+#
+# These fields are what the extraction subgraph works against dynamically.
+# Separators for documentation only — scope is bounded in the field-definition
+# repository, while the schemas here remain authoritative.
+
+header_fields:
+  - field_name: po_number
+    field_description: Purchase order identifier
+    field_type: string
+  - field_name: customer
+    field_description: Customer name
+    field_type: string
+  - field_name: gst_no
+    field_description: Customer GST number
+    field_type: string
+  - field_name: po_date
+    field_description: Purchase order date
+    field_type: string
+  - field_name: currency
+    field_description: Currency unit of the order
+    field_type: string
+  - field_name: ship_to
+    field_description: Ship-to party name
+    field_type: string
+  - field_name: address_1
+    field_description: Primary address line
+    field_type: string
+  - field_name: address_2
+    field_description: Secondary address line
+    field_type: string
+  - field_name: city
+    field_description: City
+    field_type: string
+  - field_name: state
+    field_description: State or province
+    field_type: string
+  - field_name: country
+    field_description: Country
+    field_type: string
+  - field_name: zip
+    field_description: Postal code
+    field_type: string
+  - field_name: total_amount
+    field_description: Document total amount
+    field_type: number
+
+line_item_fields:
+  - field_name: product_name
+    field_description: Product name on a line item
+    field_type: string
+  - field_name: sku
+    field_description: Product SKU on a line item
+    field_type: string
+  - field_name: quantity
+    field_description: Ordered quantity on a line item
+    field_type: number
+  - field_name: unit_price
+    field_description: Unit price on a line item
+    field_type: number
+  - field_name: total_price
+    field_description: Line-item total price
+    field_type: number

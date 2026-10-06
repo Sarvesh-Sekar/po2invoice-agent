@@ -1,0 +1,116 @@
+# Procedural / semantic memory for extraction.
+# Procedural memory: how to find each canonical field in a document.
+# Semantic memory: label synonyms + layout hints used to recognize a field.
+
+procedural:
+  po_number:
+    - Look after labels like "PO No", "PO Number", "Order No", "Purchase Order", "#".
+    - Prefer the most prominent order identifier near the header block.
+  customer:
+    - Take the buyer/customer name; usually the top-left of the header section.
+    - Use the GST registration owner name when the buyer name is absent.
+  gst_no:
+    - Look for "GSTIN", "GST No", "GST IN", format 15 characters (state code prefix).
+    - Only accept a value matching GSTIN syntax.
+  po_date:
+    - Look after labels like "Date", "PO Date", "Order Date".
+    - Convert to YYYY-MM-DD when a readable date is present.
+  currency:
+    - Look for currency symbols (Rs, $, EUR, SGD) or ISO codes.
+    - Default to INR only when nothing indicates otherwise.
+  ship_to:
+    - Prefer the "Ship To", "Deliver To", "Consignee" block.
+  address_1:
+    - First street address line of the ship-to block.
+  address_2:
+    - Second street address line (area, landmark).
+  city:
+    - City from the ship-to block.
+  state:
+    - State/province from the ship-to block.
+  country:
+    - Country from the ship-to block.
+  zip:
+    - Postal code from the ship-to block, 4-10 digits.
+  total_amount:
+    - Prefer "Grand Total", "Total", "Amount Payable", "Net Total".
+    - Must be numeric (currency symbol allowed).
+
+semantic:
+  po_number:
+    labels: [PO No, PO Number, Order No, Purchase Order, PO#]
+    layout: header
+    unit: null
+  customer:
+    labels: [Customer, Buyer, Bill To, Sold To, Party]
+    layout: header
+    unit: null
+  gst_no:
+    labels: [GSTIN, GST No, GST IN, GST Number]
+    layout: header
+    unit: null
+  po_date:
+    labels: [Date, PO Date, Order Date, Issued On]
+    layout: header
+    unit: null
+  currency:
+    labels: [Currency, Rs, $, EUR]
+    layout: header
+    unit: null
+  ship_to:
+    labels: [Ship To, Deliver To, Consignee]
+    layout: header
+    unit: null
+  address_1:
+    labels: [Address]
+    layout: header
+    unit: null
+  address_2:
+    labels: [Address 2, Area, Landmark]
+    layout: header
+    unit: null
+  city:
+    labels: [City]
+    layout: header
+    unit: null
+  state:
+    labels: [State, Province]
+    layout: header
+    unit: null
+  country:
+    labels: [Country]
+    layout: header
+    unit: null
+  zip:
+    labels: [Zip, Postal Code, PIN]
+    layout: header
+    unit: null
+  total_amount:
+    labels: [Grand Total, Total, Amount Payable, Net Total]
+    layout: header
+    unit: currency
+  product_name:
+    labels: [Item, Description, Product, Particulars, Name]
+    layout: line_item
+    unit: null
+  sku:
+    labels: [SKU, Code, HSN, Part No]
+    layout: line_item
+    unit: null
+  quantity:
+    labels: [Qty, Quantity, Qnty]
+    layout: line_item
+    unit: count
+  unit_price:
+    labels: [Rate, Unit Price, Price, Value]
+    layout: line_item
+    unit: currency
+  total_price:
+    labels: [Amount, Total, Line Total]
+    layout: line_item
+    unit: currency
+
+line_item:
+  procedure: |
+    Split the line-items section into rows; each row is one product line.
+    Match product name, SKU, quantity, unit price, and line total per row.

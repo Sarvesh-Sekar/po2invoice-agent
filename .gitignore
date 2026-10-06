@@ -1,0 +1,187 @@
+# ---------------------------------------------------------------------------
+# Monorepo .gitignore — frontend/ (Vite + React), golang_service/, python_service/
+# Patterns are repo-wide. Service-specific patterns are anchored to their
+# directory so they cannot accidentally match another service.
+# ---------------------------------------------------------------------------
+
+# --- Secrets & environment ---------------------------------------------------
+# Real .env files are never committed. Templates are:
+#   frontend/.env.example
+#   golang_service/envs/env.{dev,uat,prod}
+#   python_service  -> copy settings from app/config/settings.py defaults
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# golang_service/envs/ holds per-environment config that the binary loads at
+# runtime. Commit it (values are placeholders), but never commit a filled-in
+# copy alongside real credentials:
+!golang_service/envs/
+!golang_service/envs/*.dev
+!golang_service/envs/*.uat
+!golang_service/envs/*.prod
+
+# --- Secrets: also ignore these by name, wherever they land ------------------
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+.secrets/
+service-account*.json
+*-credentials.json
+credentials*.json
+
+# --- Node / frontend (frontend/) ---------------------------------------------
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/build/
+frontend/out/
+
+# TypeScript incremental build info (tsconfig.*.tsbuildinfo)
+*.tsbuildinfo
+
+# Bundler / test caches
+frontend/.eslintcache
+frontend/.prettiercache
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.nyc_output/
+
+# Lockfiles are committed; only patch-level drift artifacts are not
+frontend/*.lock.bak
+frontend/yarn.lock.bak
+frontend/pnpm-lock.yaml.bak
+
+# --- Python (python_service/) -----------------------------------------------
+# Virtualenvs (uv / venv / pipenv / poetry / conda)
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Packaging / build artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+pip-wheel-metadata/
+.installed.cfg
+
+# Test & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+coverage.json
+nosetests.xml
+
+# MLflow evaluation runs (tests/evaluation)
+mlruns/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtualenvs created inside the repo
+tmp/
+
+# --- Go (golang_service/) ----------------------------------------------------
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# go build -o output
+golang_service/bin/
+golang_service/ordflow
+/golang_service/po-in
+/golang_service/golang_service
+
+# Coverage / profiling
+coverage.out
+coverage.html
+*.prof
+*.coverprofile
+
+# Test binaries and fuzz corpora
+*.testlog
+/testdata/fuzz/
+
+# --- Logs (all services) -----------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+bun-debug.log*
+lerna-debug.log*
+npm-debug.log
+
+# --- Caches ------------------------------------------------------------------
+.cache/
+.parcel-cache/
+.turbo/
+.nx/
+.swc/
+
+# --- Test / coverage output, generic -----------------------------------------
+/coverage/
+/tmp/
+
+# --- Editors & IDEs ----------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.iml
+*.ipr
+*.iws
+.zed/
+*.code-workspace
+
+# OS cruft
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# --- Misc --------------------------------------------------------------------
+*.tmp
+*.temp
+*.bak
+*.orig
+*.swp
+*.swo
+*~
+.DS_Store
