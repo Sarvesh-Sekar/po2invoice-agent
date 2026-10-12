@@ -150,7 +150,7 @@ export interface PurchaseOrderListItem {
   po_number: string;
   customer_id: UUID;
   customer_name?: string;
-  status: PurchaseOrderStatus;
+  status?: PurchaseOrderStatus;
   total_amount: number;
   source_file_url: string;
   created_at: string;

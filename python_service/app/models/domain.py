@@ -213,3 +213,33 @@ class FieldExtractionOutcome(BaseModel):
     candidates: int = 0
     retries: int = 0
     quality_gate: QualityGateResult | None = None
+
+
+class HeaderField(BaseModel):
+    """A single header field extracted from the document."""
+
+    field_name: str
+    value: str | None = None
+
+
+class HeaderExtractionResult(BaseModel):
+    """Structured header extraction result returned by the extraction agent."""
+
+    header_fields: list[HeaderField] = Field(default_factory=list)
+
+
+class LineItemExtractionResultItem(BaseModel):
+    """A single line item extracted from the document."""
+
+    line_item_id: str | None = None
+    product_name: str | None = None
+    sku: str | None = None
+    quantity: int | float | None = None
+    unit_price: Decimal | float | None = None
+    total_price: Decimal | float | None = None
+
+
+class LineItemExtractionResult(BaseModel):
+    """Structured line item extraction result returned by the extraction agent."""
+
+    line_items: list[LineItemExtractionResultItem] = Field(default_factory=list)

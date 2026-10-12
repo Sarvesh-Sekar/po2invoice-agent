@@ -31,6 +31,7 @@ type Config struct {
 	RefreshTokenTTL time.Duration
 
 	FrontendRedirectURL string
+	CORSAllowedOrigins  []string
 
 	GoogleOAuthCfg GoogleOAuthConfig
 	GoogleAuthURL  string
@@ -56,6 +57,7 @@ func Load() (*Config, error) {
 		RefreshTokenTTL: getEnvDuration("JWT_REFRESH_TTL", 720*time.Hour),
 
 		FrontendRedirectURL: getEnv("FRONTEND_REDIRECT_URL", "http://localhost:5173"),
+		CORSAllowedOrigins:  splitAndTrim(getEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5173")),
 		GoogleOAuthCfg: GoogleOAuthConfig{
 			ClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 			ClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
@@ -98,4 +100,16 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+// splitAndTrim splits a comma-separated list and drops empty entries.
+func splitAndTrim(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

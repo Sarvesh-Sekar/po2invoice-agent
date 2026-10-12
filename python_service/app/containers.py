@@ -81,7 +81,9 @@ class AppContainer:
         self.sales_tools = build_sales_tools(self.sales_repository)
         # Read-only sale lookups for the verifier; verification never writes.
         self.customer_history_tools = build_customer_history_tool(self.sales_repository)
-        self.purchase_order_tools = build_purchase_order_tools(self.purchase_order_repository)
+        self.purchase_order_tools = build_purchase_order_tools(
+            self.purchase_order_repository, self.field_definition_repository
+        )
         self.policy_tools = build_policy_tools(self.policy_repository)
         self.invoice_tools = build_invoice_tools(
             sales_repository=self.sales_repository,

@@ -1,16 +1,21 @@
 """Verifier Agent: the single owner of business-level PO validation.
 
-Three independent branches fan out from the subgraph start and fan in at one
+Two independent branches fan out from the subgraph start and fan in at one
 aggregation step:
 
-    START ──▶ header_validation  ──┐
-          ──▶ line_item_validation ├──▶ aggregate ──▶ END
-          ──▶ commercial_validation┘
+    START ──▶ header_field_verifier   ──┐
+          ──▶ line_item_field_verifier ──┴──▶ aggregator_node ──▶ END
+
+The commercial verifier is DISABLED (commented out below) for now and is
+re-introduced by uncommenting its entries.
 
 Each branch is a scoped ``create_agent`` (own prompt, own tool subset) that
 returns the same small JSON contract, so aggregation merges results without
-interpreting them. The subgraph is embedded in the PO graph and compiled
-without a checkpointer, mirroring ``ExtractionAgent``.
+interpreting them. The branch system prompts carry only the procedure; the
+evaluation criteria live in ``verification.yaml`` and are loaded at runtime
+into the branch's user message, never into the system prompt. The subgraph is
+embedded in the PO graph and compiled without a checkpointer, mirroring
+``ExtractionAgent``.
 
 Answering one question only: "is the extracted PO valid for the business
 workflow?" It reports issues and never mutates business records.
@@ -18,11 +23,13 @@ workflow?" It reports issues and never mutates business records.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain_core.messages import SystemMessage
+from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.base_agent import BaseAgent
@@ -30,9 +37,14 @@ from app.agents.middleware import TracingMiddleware
 from app.config.settings import Settings
 from app.exceptions.agent_exceptions import POVerificationError
 from app.helpers.json_output import first_json_object
-from app.helpers.yaml_loader import load_prompt
+from app.helpers.yaml_loader import load_prompt, load_prompt_messages
 from app.models.domain import ValidationBranchResult, VerificationIssue, VerificationResult
-from app.orchestrator_service.verification_state import BRANCH_KEYS, VerificationState, init_verification_state
+from app.orchestrator_service.verification_state import (
+    BRANCH_KEYS,
+    NODE_KEYS,
+    VerificationState,
+    init_verification_state,
+)
 
 #: Tools each branch may call. Verification has no write access at all.
 HEADER_TOOLS = "header_tools"
@@ -43,8 +55,12 @@ COMMERCIAL_TOOLS = "commercial_tools"
 _BRANCH_SPECS: tuple[tuple[str, str, str], ...] = (
     ("header", "header_validation", HEADER_TOOLS),
     ("line_item", "line_item_validation", LINE_ITEM_TOOLS),
-    ("commercial", "commercial_validation", COMMERCIAL_TOOLS),
+    # DISABLED: commercial verifier (commented out of the graph for now).
+    # ("commercial", "commercial_validation", COMMERCIAL_TOOLS),
 )
+
+#: Fan-in node name.
+AGGREGATOR_NODE = "aggregator_node"
 
 
 class VerifierAgent(BaseAgent):
@@ -74,14 +90,16 @@ class VerifierAgent(BaseAgent):
             return self._graph
         graph = StateGraph(VerificationState)
         for branch, prompt_key, tools_attr in _BRANCH_SPECS:
-            graph.add_node(BRANCH_KEYS[branch], self._branch_node(branch, prompt_key, tools_attr))
-        graph.add_node("aggregate", self._node_aggregate)
-        graph.add_edge(START, BRANCH_KEYS["header"])
-        graph.add_edge(START, BRANCH_KEYS["line_item"])
-        graph.add_edge(START, BRANCH_KEYS["commercial"])
+            graph.add_node(NODE_KEYS[branch], self._branch_node(branch, prompt_key, tools_attr))
+        graph.add_node(AGGREGATOR_NODE, self._node_aggregate)
+        # Both active verifiers fan out from START and run concurrently.
         for branch, _prompt_key, _tools_attr in _BRANCH_SPECS:
-            graph.add_edge(BRANCH_KEYS[branch], "aggregate")
-        graph.add_edge("aggregate", END)
+            graph.add_edge(START, NODE_KEYS[branch])
+            graph.add_edge(NODE_KEYS[branch], AGGREGATOR_NODE)
+        # DISABLED: commercial verifier fan-out.
+        # graph.add_edge(START, NODE_KEYS["commercial"])
+        # graph.add_edge(NODE_KEYS["commercial"], AGGREGATOR_NODE)
+        graph.add_edge(AGGREGATOR_NODE, END)
         self._graph = graph.compile()
         return self._graph
 
@@ -98,15 +116,36 @@ class VerifierAgent(BaseAgent):
         cached = self._agents.get(branch)
         if cached is not None:
             return cached
+        # The system prompt carries only the procedure + output contract.
+        # Evaluation criteria are runtime input, rendered into the user
+        # message per invocation (see ``_branch_user_prompt``).
+        prompt = load_prompt_messages("verification.yaml", prompt_key)
         contract = load_prompt("verification.yaml", "output_contract")
-        body = load_prompt("verification.yaml", prompt_key).format(
-            price_tolerance=self._settings.verification_price_tolerance
-        )
+        body = str(prompt.get("system_prompt") or "").strip()
+        middleware: list[Any] = [TracingMiddleware(agent_name=f"{self.name}.{branch}")]
+        if branch == "header":
+            # The prompt says "call find_customer once", but a weaker model will
+            # not self-terminate its tool loop. Enforce the limit in code: the
+            # first call runs, any retry is blocked with a ToolMessage telling
+            # the model to stop calling, and it proceeds to the final report.
+            middleware.append(
+                ToolCallLimitMiddleware(
+                    tool_name="find_customer",
+                    run_limit=1,
+                    exit_behavior="continue",
+                )
+            )
+
+        print("agent:",branch,'tools:',self._branch_tools(tools_attr))
+
+
+
+        print(self.name , branch ,'branch')
         agent = create_agent(
             self._chat_model,
             tools=self._branch_tools(tools_attr),
             system_prompt=SystemMessage(f"{body}\n\n{contract}"),
-            middleware=[TracingMiddleware(agent_name=f"{self.name}.{branch}")],
+            middleware=middleware,
             name=f"{self.name}.{branch}",
         )
         self._agents[branch] = agent
@@ -117,28 +156,59 @@ class VerifierAgent(BaseAgent):
 
     # -- branch nodes ---------------------------------------------------------
 
-    def _branch_payload(self, branch: str, state: VerificationState) -> str:
+    @staticmethod
+    def _criteria(prompt_key: str) -> dict[str, Any]:
+        """Load evaluation criteria from ``verification.yaml`` at runtime."""
+        return load_prompt_messages("verification.yaml", prompt_key)
+
+    @staticmethod
+    def _dumps(value: Any) -> str:
+        return json.dumps(value, indent=2, default=str)
+
+    def _branch_user_prompt(self, branch: str, prompt_key: str, state: VerificationState) -> str:
+        """Render the branch's runtime user message from its yaml template.
+
+        Evaluation criteria are read from ``verification.yaml`` here and
+        substituted into the user message only; they never reach the system
+        prompt.
+        """
+        template = str(load_prompt_messages("verification.yaml", prompt_key).get("user_prompt") or "")
         extracted = state.get("extracted_po") or {}
         if branch == "header":
-            return (
-                f"Extracted purchase order:\n{extracted}\n\n"
-                "Run the header/PO validation procedure and return the JSON report."
-            )
-        if branch == "line_item":
-            return (
-                f"Extracted purchase order line items:\n{extracted.get('line_items') or []}\n\n"
-                f"Purchase order total amount: {state.get('po_total_amount') or 0}\n"
-                "Run the line item validation procedure and return the JSON report."
-            )
-        customer_id = state.get("customer_id")
-        return (
-            f"Purchase order total amount: {state.get('po_total_amount') or 0}\n"
-            f"Extracted customer name: {extracted.get('customer')}\n"
-            f"Resolved customer_id: {customer_id}\n"
-            f"GST number: {extracted.get('gst_no')}\n"
-            f"Catalogued line items: {len(extracted.get('line_items') or [])}\n"
-            "Run the offer/commercial validation procedure and return the JSON report."
-        )
+
+            replacements = {
+                "extracted_header_fields": self._dumps(state.get("extracted_header_fields") or extracted),
+                "evaluation_criteria_header": self._dumps(self._criteria("evaluation_criteria_header")),
+                "header_document_evidence": str(state.get("header_section") or ""),
+                "customer_context": self._dumps(
+                    {
+                        "customer_id": state.get("customer_id"),
+                        "customer": extracted.get("customer"),
+                        "gst_no": extracted.get("gst_no"),
+                    }
+                ),
+            }
+
+            print('replacements',replacements)
+        elif branch == "line_item":
+            replacements = {
+                "extracted_line_items": self._dumps(extracted.get("line_items") or []),
+                "evaluation_criteria_line_item": self._dumps(self._criteria("evaluation_criteria_line_item")),
+                "line_item_document_evidence": str(state.get("line_item_section") or ""),
+            }
+        # DISABLED: commercial verifier runtime payload.
+        # else:
+        #     customer_id = state.get("customer_id")
+        #     replacements = {
+        #         "po_total_amount": str(state.get("po_total_amount") or 0),
+        #         "customer": str(extracted.get("customer")),
+        #         "customer_id": str(customer_id),
+        #         "gst_no": str(extracted.get("gst_no")),
+        #     }
+        rendered = template
+        for placeholder, value in replacements.items():
+            rendered = rendered.replace("{{" + placeholder + "}}", value)
+        return rendered
 
     def _branch_node(self, branch: str, prompt_key: str, tools_attr: str) -> Any:
         async def _run(state: VerificationState) -> dict[str, Any]:
@@ -146,8 +216,8 @@ class VerifierAgent(BaseAgent):
             agent = self._ensure_branch_agent(branch, prompt_key, tools_attr)
             self._logger.info("node_started: verification.%s | run_id=%s", branch, state.get("run_id"))
             try:
-                payload = self._branch_payload(branch, state)
-                response = await agent.ainvoke({"messages": [SystemMessage(content=payload)]})
+                payload = self._branch_user_prompt(branch, prompt_key, state)
+                response = await agent.ainvoke({"messages": [HumanMessage(content=payload)]})
                 report = self._parse_branch_report(response)
             except Exception as exc:
                 self._logger.exception(
@@ -238,15 +308,21 @@ class VerifierAgent(BaseAgent):
         started = time.perf_counter()
         branches = [
             ValidationBranchResult.model_validate(state[key])
-            for key in (BRANCH_KEYS["header"], BRANCH_KEYS["line_item"], BRANCH_KEYS["commercial"])
+            for key in (
+                BRANCH_KEYS["header"],
+                BRANCH_KEYS["line_item"],
+                # DISABLED: commercial verifier; its state key stays None.
+                # BRANCH_KEYS["commercial"],
+            )
             if state.get(key)
         ]
         result = self._aggregate(state, branches)
         blocking = result.blocking_issues
         warnings = result.warnings
         self._logger.info(
-            "node_completed: verification.aggregate | run_id=%s | duration_ms=%.3f | passed=%s | "
+            "node_completed: verification.%s | run_id=%s | duration_ms=%.3f | passed=%s | "
             "branch_count=%d | blocking_issue_count=%d | warning_count=%d",
+            AGGREGATOR_NODE,
             state.get("run_id"),
             (time.perf_counter() - started) * 1000,
             result.criteria_met,
@@ -269,6 +345,7 @@ class VerifierAgent(BaseAgent):
             "hitl_context": self._hitl_context(state, blocking, warnings) if not result.criteria_met else None,
             "current_step": "verification",
             "status": "RUNNING",
+            # "customer_id" : state.get('customer_id')
         }
 
     @staticmethod

@@ -16,6 +16,13 @@ BRANCH_KEYS: dict[str, str] = {
     "commercial": "commercial_validation",
 }
 
+#: Node name mapping used by the verifier subgraph.
+NODE_KEYS: dict[str, str] = {
+    "header": "header_field_verifier",
+    "line_item": "line_item_field_verifier",
+    "commercial": "commercial_field_verifier",
+}
+
 
 class VerificationState(TypedDict, total=False):
     # inherited / identity fields

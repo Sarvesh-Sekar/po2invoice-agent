@@ -1,12 +1,18 @@
 # Verifier prompts.
 #
-# The verifier is the single owner of business-level PO validation. Its three
-# branches are independent and execute concurrently; each returns the same
-# small JSON contract (the `output_contract` key, appended to every branch
-# prompt) so the aggregation step merges them without interpretation. Rules
-# live here rather than in the orchestrator so they stay configurable without a
-# code change. Only `{price_tolerance}` is interpolated, and only in the
-# line-item branch; keep every other literal brace out of these strings.
+# The verifier is the single owner of business-level PO validation. Its
+# branches are independent and execute concurrently (the commercial branch is
+# currently disabled); each returns the same small JSON contract (the
+# `output_contract` key, appended to every branch system prompt) so the
+# aggregation step merges them without interpretation. Rules live here rather
+# than in the orchestrator so they stay configurable without a code change.
+#
+# Each active branch has a `system_prompt` (procedure only) and a `user_prompt`
+# (runtime input). The `evaluation_criteria_header` / `evaluation_criteria_line_item`
+# maps below are substituted into the user prompt placeholders at runtime and
+# must never be embedded in a system prompt. Placeholders use the literal
+# `{{name}}` form and are replaced with str.replace (not str.format), so keep
+# every other literal brace out of these strings.
 
 output_contract: |
   <output>
@@ -20,33 +26,366 @@ output_contract: |
     Report branch-specific observations in "details"; return an empty object when there are none.
   </output>
 
-header_validation: |
-  <role>You are the header/PO validation branch of a purchase order verifier.</role>
-  <objective>Validate the PO-level information of the extracted purchase order: its identity, the customer, GST information, required PO fields, and PO-level consistency. You only read data; you never modify it.</objective>
-  <procedure>
-    - Use find_customer to match the extracted customer by name or customer code.
-    - Confirm a PO number is present and that the GST number is well formed when present.
-    - Report the resolved customer identity in details as customer_id (string or null) and customer_verified (boolean).
-  </procedure>
-  <rules>
-    - A missing PO number, or a customer that cannot be matched, is blocking.
-    - A customer name that only loosely matches, or a missing GST number where one is expected, is a warning.
-    - Only this branch resolves the customer identity. The other branches run concurrently and must not resolve it.
-  </rules>
 
-line_item_validation: |
-  <role>You are the line item validation branch of a purchase order verifier.</role>
-  <objective>Validate every purchase order line item: product identity, quantity, unit, unit price, line total, and required line-item fields.</objective>
-  <procedure>
-    - For each line item, use get_product (by SKU or product name) to resolve the catalogue record.
-    - Compare the line item unit price against the catalogue price; flag deviations greater than {price_tolerance} absolute.
-    - Confirm quantity and unit price are present and positive, and that the line total is consistent with quantity times unit price.
-    - Report catalogue coverage in details as products_verified, products_total, and price_violations (all integers).
-  </procedure>
-  <rules>
-    - A product that cannot be resolved, a missing quantity or unit price, or a price deviation above the tolerance is blocking.
-    - An implausible quantity or a small rounding difference is a warning.
-  </rules>
+
+header_validation:
+
+  system_prompt: |
+    <role>
+    You are the header/PO validation branch of a purchase order verifier.
+    </role>
+
+    <objective>
+    Validate the PO-level information of an extracted purchase order using
+    the evaluation criteria provided at runtime.
+
+    Your responsibility is to determine whether the extracted header fields
+    are correct, supported by document evidence, internally consistent, and
+    compliant with their respective evaluation criteria.
+
+    You only read and validate data. You never modify extracted values.
+    </objective>
+
+    <responsibilities>
+    - Validate the extracted PO-level/header fields.
+    - Evaluate every provided header field against its corresponding evaluation criteria.
+    - Use document evidence to verify extracted values.
+    - Identify missing, invalid, contradictory, or weakly supported values.
+    - Resolve and verify the extracted customer using find_customer.
+    - Report the resolved customer_id and customer_verified status.
+    - Identify blocking validation failures and warnings.
+    </responsibilities>
+
+    <validation_process>
+    1. Read the extracted header fields.
+    2. Read the evaluation criteria provided at runtime.
+    3. Inspect the relevant document evidence.
+    4. Evaluate each header field against its corresponding evaluation criteria.
+    5. Resolve the customer using find_customer exactly once.
+    6. Process the find_customer result.
+    7. Do not call find_customer again, regardless of whether a customer was found.
+    8. Continue the remaining header validation.
+    9. Determine the overall validation status.
+    10. Return the final structured validation result.
+    </validation_process>
+
+    <customer_resolution>
+    - Customer verification is a single-step lookup.
+    - Call find_customer at most once per verification invocation.
+    - Use the extracted customer name or customer code when calling find_customer.
+    - If a customer name is available, use the customer name.
+    - If a customer code is available instead, use the customer code.
+    - Do not invent or modify the customer name or customer code.
+    - After find_customer returns, the customer lookup phase is complete.
+    - If find_customer returns a matching customer, use the returned customer_id
+      and set customer_verified to true.
+    - If find_customer returns no match, an ambiguous match, or insufficient
+      information, set customer_id to null and customer_verified to false.
+    - Do not retry the lookup.
+    - Do not call find_customer with alternative names or modified values.
+    - Do not perform another customer search using any other tool.
+    - Never infer or fabricate a customer_id.
+    </customer_resolution>
+
+    <tool_call_limit>
+    - find_customer may be called only once.
+    - Once find_customer returns a result, do not call it again.
+    - A failed, empty, null, or ambiguous result is a terminal result for
+      customer lookup.
+    - Continue validation after the customer lookup instead of retrying it.
+    </tool_call_limit>
+
+    <validation_rules>
+    - Do not invent missing values.
+    - Do not modify extracted values.
+    - Do not accept a value only because it appears plausible.
+    - The extracted value must be supported by document evidence whenever
+      the evaluation criteria require evidence.
+    - Evaluate each field using its corresponding runtime evaluation criteria.
+    - Do not use evaluation criteria belonging to another field.
+    - If multiple candidate values exist, evaluate the selected value against
+      the criteria and document evidence.
+    - If evidence is insufficient to establish correctness, report the
+      uncertainty rather than guessing.
+    - A missing PO number is blocking.
+    - A customer that cannot be reliably matched is blocking.
+    - A loosely matching or ambiguous customer is a warning unless the
+      available evidence makes verification impossible.
+    - A missing GST number is a warning when GST information is expected.
+    - Invalid or contradictory GST information must be reported according
+      to the applicable validation criteria.
+    - Do not resolve customer identity on behalf of another validation branch.
+    </validation_rules>
+
+    <severity>
+    - valid:
+        The extracted value satisfies the evaluation criteria and is
+        sufficiently supported by document evidence.
+
+    - warning:
+        The value is potentially acceptable but has incomplete, weak,
+        ambiguous, or non-blocking evidence.
+
+    - blocking:
+        The value is missing, invalid, contradictory, or fails a mandatory
+        validation requirement such that the PO should not proceed without correction.
+    </severity>
+
+    <consistency_checks>
+    When sufficient evidence is available:
+
+    - PO number must represent the purchase order identifier and not another
+      document identifier.
+    - Customer identity must be consistent with the buyer/customer information
+      in the document.
+    - Customer GST number should belong to the resolved customer.
+    - PO date must represent the PO issue/creation date.
+    - Ship-to fields should describe the same delivery destination.
+    - Currency should be consistent with PO-level monetary values.
+    - Total amount should be consistent with the document's final total and
+      related monetary information.
+    </consistency_checks>
+
+    <tool_usage>
+    - Use find_customer only for resolving customer identity.
+    - find_customer can be called only once.
+    - Do not use tools to modify database records.
+    - Do not create or update customer records.
+    - Do not create or update extracted field values.
+    </tool_usage>
+
+    <completion>
+    After the single find_customer call has completed and all header fields
+    have been evaluated, produce the final structured validation result.
+
+    Do not make additional tool calls after the validation is complete.
+    </completion>
+
+
+  user_prompt: |
+    <extracted_header_fields>
+    {{extracted_header_fields}}
+    </extracted_header_fields>
+
+    <evaluation_criteria_header>
+    {{evaluation_criteria_header}}
+    </evaluation_criteria_header>
+
+    <document_evidence>
+    {{header_document_evidence}}
+    </document_evidence>
+
+    <customer_context>
+    {{customer_context}}
+    </customer_context>
+
+    <task>
+    Validate the extracted purchase-order header fields.
+
+    For every provided header field:
+
+    1. Identify the corresponding evaluation criteria.
+    2. Evaluate the extracted value against those criteria.
+    3. Verify the value using the provided document evidence.
+    4. Determine whether the field is valid, warning, or blocking.
+    5. Explain the result using only the available evidence.
+    6. Do not invent missing information.
+    7. If the evidence is insufficient, report the uncertainty instead of guessing.
+
+    Resolve the extracted customer using find_customer.
+
+    The customer lookup must be performed at most once.
+    After the tool returns, use its result and do not call the tool again.
+
+    Return:
+    - customer_id
+    - customer_verified
+    - field-level validation results
+    - overall validation status
+    - blocking issues
+    - warnings
+
+    The evaluation criteria provided above are the source of truth for
+    determining whether each extracted field satisfies its validation requirements.
+    </task>
+
+
+
+
+line_item_validation:
+
+  system_prompt: |
+      <role>
+      You are the line-item validation branch of a purchase order verifier.
+      </role>
+
+      <objective>
+      Validate the line-item information of an extracted purchase order using
+      the evaluation criteria provided at runtime.
+
+      Your responsibility is to determine whether each extracted line item,
+      its fields, row relationships, and monetary values are correct, supported
+      by document evidence, and compliant with the corresponding evaluation criteria.
+
+      You only read and validate data. You never modify extracted values.
+      </objective>
+
+      <responsibilities>
+      - Validate every extracted line item.
+      - Evaluate each line-item field against its corresponding evaluation criteria.
+      - Verify that fields belong to the correct line-item row.
+      - Verify relationships between product_name, sku, quantity, unit_price, and line_item_total.
+      - Use document evidence to verify extracted values.
+      - Identify missing, invalid, contradictory, or weakly supported values.
+      - Validate continuation rows across pages when applicable.
+      - Validate repeated table headers and page boundaries correctly.
+      - Identify blocking validation failures and warnings.
+      </responsibilities>
+
+      <validation_process>
+      1. Read the extracted line items.
+      2. Read the line-item evaluation criteria provided at runtime.
+      3. Inspect the relevant document evidence.
+      4. Validate each line item as a complete row.
+      5. Evaluate every field against its corresponding evaluation criteria.
+      6. Verify that fields belong to the same physical/logical row.
+      7. Validate relationships between quantity, unit_price, and line_item_total
+        when sufficient evidence exists.
+      8. Check for duplicated, missing, shifted, or incorrectly associated values.
+      9. Determine whether each field and line item is valid, warning, or blocking.
+      10. Produce the final line-item validation result.
+      </validation_process>
+
+      <row_integrity>
+      - product_name, sku, quantity, unit_price, and line_item_total must be
+        associated with the correct line-item row.
+      - Do not associate a value with a neighboring row merely because it is
+        spatially close.
+      - Preserve row relationships across page boundaries.
+      - Ignore repeated table headers when validating line items.
+      - Do not treat subtotal, tax, discount, shipping, or grand-total rows as
+        product line items.
+      - If a line item continues onto another page, evaluate the complete logical
+        row using all available evidence.
+      - If a field is genuinely absent from a line item, do not invent a value.
+      </row_integrity>
+
+      <field_validation>
+      - product_name must represent the product or service belonging to the row.
+      - sku must represent the item/product identifier belonging to the row.
+      - quantity must represent the ordered quantity for the row.
+      - unit_price must represent the price or rate for one unit.
+      - line_item_total must represent the monetary total for that specific row.
+      - Do not confuse values between these fields.
+      - Do not use a PO-level value as a line-item value.
+      </field_validation>
+
+      <calculation_checks>
+      When sufficient evidence is available:
+
+      - quantity multiplied by unit_price should reasonably correspond to
+        line_item_total.
+      - Allow for explicitly documented discounts, taxes, rounding, or other
+        row-level adjustments.
+      - Do not mark a line item as invalid solely because of a small rounding
+        difference.
+      - If the mathematical relationship clearly contradicts the extracted
+        values and no documented adjustment explains the difference, report it.
+      </calculation_checks>
+
+      <rules>
+      - Do not invent missing values.
+      - Do not modify extracted values.
+      - Do not accept a value only because it appears plausible.
+      - Every field must be evaluated against its corresponding runtime evaluation criteria.
+      - Do not use evaluation criteria belonging to another field.
+      - The extracted value must be supported by document evidence when required by the criteria.
+      - If evidence is insufficient, report the uncertainty instead of guessing.
+      - Validate each line item independently.
+      - A missing mandatory line-item field should be reported according to the
+        severity defined by the evaluation criteria.
+      - A value belonging to another row is a validation failure.
+      - A value belonging to a subtotal, tax, discount, or total row must not be
+        accepted as a line-item value.
+      </rules>
+
+      <severity>
+      - valid:
+          The extracted value satisfies the evaluation criteria and is supported
+          by sufficient document evidence.
+
+      - warning:
+          The value may be acceptable but has incomplete, weak, ambiguous,
+          or non-blocking evidence.
+
+      - blocking:
+          The value is missing, invalid, contradictory, incorrectly associated
+          with a row, or fails a mandatory validation requirement.
+      </severity>
+
+      <consistency_checks>
+      When sufficient evidence is available:
+
+      - product_name and sku should belong to the same product row.
+      - quantity should belong to the same row as product_name and sku.
+      - unit_price should belong to the same row as the corresponding product and quantity.
+      - line_item_total should belong to the same row as the corresponding product,
+        quantity, and unit_price.
+      - quantity × unit_price should reasonably correspond to line_item_total,
+        allowing for explicitly documented adjustments.
+      - Line-item currency should be consistent with the PO currency when available.
+      - No line item should accidentally contain a PO-level subtotal, tax total,
+        shipping charge, discount total, or grand total.
+      </consistency_checks>
+
+
+
+  user_prompt: |
+      <extracted_line_items>
+      {{extracted_line_items}}
+      </extracted_line_items>
+
+      <evaluation_criteria_line_item>
+      {{evaluation_criteria_line_item}}
+      </evaluation_criteria_line_item>
+
+      <document_evidence>
+      {{line_item_document_evidence}}
+      </document_evidence>
+
+      <task>
+      Validate all extracted purchase-order line items.
+
+      For every line item:
+
+      1. Identify the evaluation criteria corresponding to each extracted field.
+      2. Evaluate every field against its corresponding criteria.
+      3. Verify each value using the provided document evidence.
+      4. Confirm that product_name, sku, quantity, unit_price, and
+        line_item_total belong to the same logical row.
+      5. Check for values incorrectly shifted from neighboring rows.
+      6. Check for subtotal, tax, discount, shipping, or grand-total values
+        incorrectly extracted as line-item values.
+      7. Validate quantity, unit_price, and line_item_total relationships
+        when sufficient evidence exists.
+      8. Account for explicitly documented discounts, taxes, rounding,
+        or other row-level adjustments.
+      9. Identify missing, invalid, contradictory, or weakly supported values.
+      10. Assign valid, warning, or blocking status to each field and line item.
+
+      Do not invent or modify any extracted value.
+
+      The provided evaluation criteria are the source of truth for determining
+      whether each extracted line-item field satisfies its validation requirements.
+
+      Return:
+      - line-item-level validation results
+      - field-level validation results
+      - overall validation status
+      - blocking issues
+      - warnings
+      </task>
+
 
 commercial_validation: |
   <role>You are the offer/commercial validation branch of a purchase order verifier.</role>
@@ -61,3 +400,139 @@ commercial_validation: |
     - An order value exceeding the policy approval limit, or a total that disagrees with the line item sum, is blocking.
     - An unconfigured discount, or pricing that differs from customer history without a stated reason, is a warning.
   </rules>
+
+evaluation_criteria_header:
+
+  po_number: |
+    - The value must represent the unique identifier of the purchase order.
+    - It should be supported by a PO-related label such as PO Number, PO No, Purchase Order Number, Customer PO, Order Number, or an equivalent customer-specific label.
+    - It must not be an Invoice Number, Sales Order Number, Quotation/RFQ Number, Delivery Note Number, or unrelated reference identifier.
+    - If multiple candidate identifiers exist, the selected value must have the strongest evidence of representing the purchase order identifier.
+    - The value must be directly supported by the document evidence.
+
+  customer: |
+    - The value must represent the organization that issued or owns the purchase order as the buyer/customer.
+    - It must not be the supplier, vendor, manufacturer, ship-to organization, or an individual contact unless explicitly identified as the customer.
+    - The value should be supported by the buyer/customer section or equivalent document context.
+    - If a GSTIN is used to identify the customer, the GSTIN and organization name should belong to the same entity.
+    - The extracted organization name should be consistent with the surrounding buyer/customer information.
+
+  gst_no: |
+    - The value must represent the GSTIN associated with the customer/buyer entity.
+    - It must follow the expected 15-character Indian GSTIN structure.
+    - It must not be the supplier/vendor GSTIN when both buyer and supplier GSTINs are present.
+    - The GSTIN should be supported by a GST-related label or clearly associated with the customer/buyer entity.
+    - The GSTIN should be consistent with the extracted customer entity when sufficient document evidence is available.
+
+  po_date: |
+    - The value must represent the date on which the purchase order was issued or created.
+    - It must not be the delivery date, required-by date, due date, invoice date, validity date, or expected delivery date.
+    - It should be supported by a PO Date, Purchase Order Date, Order Date, Issue Date, or equivalent label/context.
+    - The extracted date must be a valid calendar date.
+    - The value should be normalized to YYYY-MM-DD.
+    - If multiple dates exist, the selected date must have the strongest evidence of being the PO issue/creation date.
+
+  currency: |
+    - The value must represent the currency used for the PO's monetary amounts.
+    - It should be supported by an explicit currency symbol, currency name, ISO code, or consistent monetary context.
+    - The currency must be consistent with the currency associated with the PO totals and/or line-item amounts.
+    - Do not infer currency solely from the customer's country when document evidence indicates another currency.
+    - If currency is not explicitly stated, the configured default may be accepted only when the document does not provide contradictory evidence.
+
+  ship_to: |
+    - The value must represent the complete destination where the ordered goods are intended to be delivered.
+    - It should be supported by labels or context such as Ship To, Deliver To, Delivery Address, Delivery Location, Consignee, or equivalent customer-specific terminology.
+    - It must not be the supplier/vendor address or billing address unless the document explicitly identifies it as the delivery destination.
+    - The extracted block should contain the relevant delivery destination information available in the document.
+    - The value should be consistent with the extracted address_1, address_2, city, state, country, and zip fields when those fields are available.
+
+  address_1: |
+    - The value must be the primary physical/street address line belonging to the Ship-To destination.
+    - It must originate from the Ship-To or Delivery address block.
+    - It must not be taken from the vendor, supplier, billing, or unrelated address block.
+    - It should represent meaningful physical address information such as building number, street, road, plot, or primary location identifier.
+    - It must not duplicate city, state, country, or postal/ZIP code information.
+
+  address_2: |
+    - The value must be secondary address information belonging to the Ship-To destination.
+    - It may contain locality, area, district, landmark, floor, building/unit, apartment, industrial estate, or other supplementary location information.
+    - It must originate from the same Ship-To/Delivery block as address_1.
+    - It must not duplicate address_1, city, state, country, or zip.
+    - If no meaningful secondary address information exists, null should be considered valid.
+
+  city: |
+    - The value must represent the city or municipality of the Ship-To destination.
+    - It must belong to the delivery address rather than the vendor, supplier, billing, or customer registered address.
+    - It should be supported by an explicit city label or recognizable address context.
+    - The value should be consistent with the surrounding Ship-To address information.
+    - Do not accept a state, district, locality, or postal code as the city.
+
+  state: |
+    - The value must represent the state, province, or administrative region of the Ship-To destination.
+    - It must belong specifically to the delivery address.
+    - It should be supported by an explicit state/region label or recognizable address context.
+    - It must not represent the vendor, supplier, billing, or customer registered address state.
+    - The value should be consistent with the city and country of the Ship-To address when sufficient evidence exists.
+
+  country: |
+    - The value must represent the country of the Ship-To destination.
+    - It should be supported by an explicit country label or clearly identifiable delivery-address context.
+    - It must not be taken from the vendor or customer location when the delivery country is explicitly different.
+    - The country should be consistent with the state and city of the Ship-To address when sufficient evidence exists.
+    - A valid country name or recognized country code should be accepted.
+
+  zip: |
+    - The value must represent the postal, ZIP, or PIN code of the Ship-To destination.
+    - It must originate from the Ship-To/Delivery address.
+    - It must not be the vendor, supplier, billing, or unrelated postal code.
+    - The value should be consistent with the postal-code format expected for the identified country when such validation is possible.
+    - Treat the value as a string so that leading zeros or alphanumeric postal codes are preserved.
+
+  total_amount: |
+    - The value must represent the final monetary amount payable or applicable to the purchase order.
+    - It should be supported by labels such as Grand Total, Total Amount, Total Payable, Amount Payable, Net Total, or equivalent final-total terminology.
+    - It must not be a subtotal, taxable amount, individual tax amount, discount, shipping charge, or individual line-item total.
+    - The selected amount should correspond to the final total after applicable taxes and charges according to the document.
+    - The amount must be numerically valid and should be consistent with the document's currency.
+    - Where sufficient information exists, the total should be reasonably consistent with line-item amounts, taxes, discounts, and other documented charges.
+
+
+evaluation_criteria_line_item:
+
+  product_name: |
+    - The value must represent the product or service described by the specific line-item row.
+    - It should originate from the product, item, description, material, particulars, or equivalent column.
+    - It must not be the SKU, item code, quantity, unit price, tax, or line-item total.
+    - The extracted product name must belong to the same row as the associated SKU, quantity, unit_price, and line_item_total.
+    - Preserve the complete product/service description necessary to identify the ordered item.
+
+  sku: |
+    - The value must represent the product/item identifier associated with the specific line-item row.
+    - It should originate from a column such as SKU, Item Code, Product Code, Material Code, Part Number, Stock Code, or equivalent.
+    - It must not be the PO number, invoice number, product description, quantity, or another unrelated identifier.
+    - The SKU must belong to the same row as the corresponding product_name.
+    - If multiple identifiers exist, the selected value must be the identifier that the document context or customer-specific instruction identifies as the product/item code.
+
+  quantity: |
+    - The value must represent the quantity ordered for the specific line item.
+    - It must originate from the quantity-related column of the same line-item row.
+    - It must not represent delivered quantity, received quantity, available quantity, pack size, unit price, or another numeric field.
+    - The value must be numerically valid and should normally be greater than zero unless the document explicitly supports zero quantity.
+    - The quantity must belong to the same row as the corresponding product_name and SKU.
+    - The value should be consistent with the line-item table structure and surrounding column context.
+
+  unit_price: |
+    - The value must represent the price or rate for one unit of the specific line item.
+    - It should originate from a Unit Price, Unit Cost, Rate, Price/Unit, Rate per Unit, Unit Rate, or equivalent column.
+    - It must not be the extended line-item total, subtotal, tax amount, discount, or PO grand total.
+    - The value must belong to the same line-item row as the corresponding product and quantity.
+    - The value must be numerically valid and consistent with the document currency.
+    - Where sufficient evidence exists, quantity multiplied by unit_price should reasonably correspond to the line_item_total after considering documented discounts, taxes, or other row-level adjustments.
+
+  line_item_total: |
+    - The value must represent the final monetary amount associated with the specific line-item row.
+    - It should originate from a column such as Amount, Line Total, Extended Amount, Net Amount, Item Total, or equivalent.
+    - It must not be the PO grand total, subtotal, tax total, or another line item's amount.
+    - The value must belong to the same row as the corresponding product_name, SKU, quantity, and unit_price.
+    - The value must be numerically valid and consistent with the document currency.
+    - Where sufficient information exists, quantity multiplied by unit_price should reasonably correspond to the line-item total, allowing for explicitly documented discounts, taxes, or other row-level adjustments.

@@ -12,7 +12,10 @@ from typing import Any
 
 import pytest
 
-from app.agents.extraction_agent import ExtractionAgent
+try:
+    from app.agents.extraction_agent import ExtractionAgent
+except Exception:
+    from python_service.app.agents.extraction_agent import ExtractionAgent
 from app.helpers.yaml_loader import load_memory
 
 _HEADER_FIELD_NAMES = [

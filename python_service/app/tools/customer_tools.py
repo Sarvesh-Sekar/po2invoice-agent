@@ -34,6 +34,7 @@ def build_customer_tools(repository: CustomerRepository) -> list[Any]:
         """
         customer = await repository.find(name=name, customer_code=customer_code)
         payload = _customer_payload(customer)
+        print(payload,'customer_payload','found:',payload is not None)
         return {"found": payload is not None, "customer": payload}
 
     return [find_customer]

@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { SkeletonTable } from "@/components/ui/Skeleton";
 import { Pagination } from "@/components/common/DataTable";
-import { StatusBadge } from "@/components/common/StatusBadge";
 import { Table, type Column } from "@/components/ui/Table";
 import { ROUTES, SALE_STATUSES } from "@/constants";
+import { SaleStatusCell } from "@/features/sales/components/SaleStatusCell";
 import { useSales } from "@/features/sales/hooks";
 import type { SaleFilters, SaleListItem } from "@/types/api";
 import { formatCurrency, formatDate, titleCase } from "@/lib/utils";
@@ -68,7 +68,7 @@ export function SalesPage() {
     {
       key: "status",
       header: "Status",
-      cell: (row) => <StatusBadge status={row.status} label={titleCase(row.status)} />,
+      cell: (row) => <SaleStatusCell sale={row} />,
     },
     {
       key: "created_at",
@@ -163,10 +163,7 @@ export function SalesPage() {
               onRowClick={(row) => navigate(`${ROUTES.SALES}/${row.sale_id}`)}
             />
           </div>
-          <Pagination
-            meta={query.data.meta}
-            onPageChange={changePage}
-          />
+          <Pagination meta={query.data.meta} onPageChange={changePage} />
         </>
       )}
     </div>

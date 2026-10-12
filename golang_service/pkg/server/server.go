@@ -65,6 +65,7 @@ func NewRouter(cfg *config.Config, log *zap.Logger, db *gorm.DB) (*gin.Engine, e
 	r.Use(middleware.Recovery(log))
 	r.Use(middleware.RequestID())
 	r.Use(middleware.Logging(log))
+	r.Use(middleware.CORS(cfg.CORSAllowedOrigins))
 
 	v1 := r.Group("/api/v1")
 

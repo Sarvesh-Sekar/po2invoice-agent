@@ -49,7 +49,8 @@ export function relativeTime(value: string): string {
   return formatDate(value);
 }
 
-export function titleCase(value: string): string {
+export function titleCase(value?: string | null): string {
+  if (!value) return "—";
   return value
     .toLowerCase()
     .split("_")

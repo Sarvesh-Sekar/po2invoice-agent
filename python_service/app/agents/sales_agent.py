@@ -6,10 +6,11 @@ system prompt) and invoked asynchronously via ``ainvoke``.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage,HumanMessage
 
 from app.agents.base_agent import BaseAgent
 from app.agents.middleware import TracingMiddleware
@@ -18,6 +19,25 @@ from app.helpers.json_output import first_json_object
 from app.helpers.yaml_loader import load_prompt
 
 
+NEEDED_TOOLS = ['create_purchase_order','create_sale']
+
+#: Header (non line-item) fields carried from the validated PO into persistence.
+_HEADER_FIELD_NAMES = (
+    "po_number",
+    "customer",
+    "gst_no",
+    "ship_to",
+    "address_1",
+    "address_2",
+    "city",
+    "state",
+    "country",
+    "zip",
+    "total_amount",
+)
+
+#: Line-item fields persisted per row (total_price is derived, not extracted).
+_LINE_ITEM_FIELD_NAMES = ("product_name", "sku", "quantity", "unit_price")
 class SalesAgent(BaseAgent):
     name = "sales"
 
@@ -28,12 +48,15 @@ class SalesAgent(BaseAgent):
         self._agent: Any = None
 
     def _ensure_agent(self) -> Any:
-        if self._agent is not None:
-            return self._agent
+        # if self._agent is not None:
+        #     return self._agent
         system_prompt = SystemMessage(load_prompt("sales.yaml", "sales"))
+        
+        filtered_tools = [tool  for tool in self._tools if tool.name in NEEDED_TOOLS]
+         
         self._agent = create_agent(
             self._chat_model,
-            tools=list(self._tools),
+            tools=filtered_tools,
             system_prompt=system_prompt,
             middleware=[TracingMiddleware(agent_name=self.name)],
             name=self.name,
@@ -44,18 +67,22 @@ class SalesAgent(BaseAgent):
         return self._ensure_agent()
 
     async def invoke_agent(self, state: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        verification = state.get("verification_result") or {}
-        customer_id = verification.get("customer_id")
-        if state.get("extracted_po") is None or not customer_id:
+        verification_result = state.get("verification_result") or {}
+        customer_id = state.get("customer_id") or verification_result.get("customer_id")
+        extracted_po = state.get("extracted_po")
+        if extracted_po is None or not customer_id:
             raise POVerificationError(details={"reason": "validated PO or customer missing"})
 
         agent = self._ensure_agent()
+        header_fields, line_items = self._rebuild_fields_from_po(extracted_po)
         payload = (
             f"Validated customer_id: {customer_id}\n"
             f"Source file url (s3_url): {state.get('source_file_url')}\n"
-            "Create the purchase order metadata and the matching sale, then return the JSON result."
+            f"header_fields: {json.dumps(header_fields)}\n"
+            f"line_items: {json.dumps(line_items)}\n"
+            
         )
-        response = await agent.ainvoke({"messages": [SystemMessage(content=payload)]})
+        response = await agent.ainvoke({"messages": [HumanMessage(content=payload)]})
         result = self._parse_result(response, customer_id, state.get("source_file_url"))
         return self._map_update(state, result)
 
@@ -86,6 +113,32 @@ class SalesAgent(BaseAgent):
         result.setdefault("customer_id", customer_id)
         result.setdefault("source_file_url", source_file_url)
         return result
+
+    @staticmethod
+    def _rebuild_fields_from_po(extracted_po: dict[str, Any]) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]]]:
+        """Rebuild header/line item field lists from the (possibly HITL-edited) extracted PO."""
+        header_fields: list[dict[str, Any]] = []
+        for name in _HEADER_FIELD_NAMES:
+            if name in extracted_po:
+                value = extracted_po.get(name)
+                if value is None or not str(value).strip():
+                    continue
+                header_fields.append({"field_name": name, "value": str(value)})
+
+        line_items: list[list[dict[str, Any]]] = []
+        for item in extracted_po.get("line_items") or []:
+            row: list[dict[str, Any]] = []
+            if not isinstance(item, dict):
+                continue
+            for name in _LINE_ITEM_FIELD_NAMES:
+                if name in item:
+                    value = item.get(name)
+                    if value is None or not str(value).strip():
+                        continue
+                    row.append({"field_name": name, "value": str(value)})
+            if row:
+                line_items.append(row)
+        return header_fields, line_items
 
     @staticmethod
     def _map_update(state: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

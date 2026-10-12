@@ -41,7 +41,7 @@ export function PurchaseOrderTable({ rows, onRowClick, onAction }: PurchaseOrder
     {
       key: "status",
       header: "Status",
-      cell: (row) => <StatusBadge status={row.status} label={titleCase(row.status)} />,
+      cell: (row) => <StatusBadge status={row.status ?? ""} label={titleCase(row.status)} />,
     },
     {
       key: "ai_confidence",
@@ -81,11 +81,6 @@ export function PurchaseOrderTable({ rows, onRowClick, onAction }: PurchaseOrder
   ];
 
   return (
-    <Table
-      columns={columns}
-      rows={rows}
-      rowKey={(row) => row.po_id}
-      onRowClick={onRowClick}
-    />
+    <Table columns={columns} rows={rows} rowKey={(row) => row.po_id} onRowClick={onRowClick} />
   );
 }
